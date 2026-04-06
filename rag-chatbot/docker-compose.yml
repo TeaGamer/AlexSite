@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  rag-chatbot:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DEVICE=cpu
+      - LLM_MODEL_NAME=meta-llama/Llama-2-7b-hf
+      - EMBEDDING_MODEL_NAME=sentence-transformers/distilbert-base-uncased
+      - VECTOR_DB_TYPE=chroma
+      - CHROMA_PATH=/app/vector_store
+      - MODELS_CACHE_DIR=/app/models_cache
+    volumes:
+      - ./vector_store:/app/vector_store
+      - ./models_cache:/app/models_cache
+      - ./uploads:/app/uploads
+      - ./datasets:/app/datasets
+    command: python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
+
+volumes:
+  vector_store:
+  models_cache:
+  uploads:
+  datasets:
