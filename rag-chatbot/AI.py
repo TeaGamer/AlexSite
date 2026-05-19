@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -6,24 +6,33 @@ import os
 from dotenv import load_dotenv
 import google.generativeai as genai
 import asyncio
+import shutil
+from pathlib import Path
 
-# Завантажимо змінні з .env
+# LangChain imports
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_community.vectorstores import Chroma
+from langchain_community.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import WebBaseLoader
+
+# Load environment variables
 load_dotenv()
 
-# Отримаємо API ключ
+# Get API key
 api_key = os.getenv("GOOGLE_API_KEY")
 
 if not api_key:
-    raise ValueError("GOOGLE_API_KEY не знайдений у змінних середовища")
+    raise ValueError("GOOGLE_API_KEY not found in environment")
 
-# Налаштуємо Google API
+# Configure Google API
 genai.configure(api_key=api_key)
 
-# Створимо FastAPI додаток
-app = FastAPI(title="Gemini ChatBot API")
+# Create FastAPI app
+app = FastAPI(title="Gemini ChatBot API with RAG")
 
-# Налаштування CORS
-cors_origins = os.environ.get('CORS_ORIGINS', 'http://localhost:3000,http://localhost:8000,https://alexsite-swzo.onrender.com').split(',')
+# Configure CORS
+cors_origins = os.environ.get('CORS_ORIGINS', 'http://localhost:3000,http://localhost:8000').split(',')
 cors_origins = [origin.strip() for origin in cors_origins]
 
 app.add_middleware(
@@ -34,60 +43,196 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Модель для запиту
+# Request models
 class MessageRequest(BaseModel):
     message: str
 
-# Зберігаємо chat_session глобально
+class URLRequest(BaseModel):
+    url: str
+
+# Global variables
 chat_session = None
+vector_store = None
+embeddings = None
+
+# Upload folder for PDF files
+UPLOAD_FOLDER = "uploads"
+Path(UPLOAD_FOLDER).mkdir(exist_ok=True)
 
 @app.on_event("startup")
 async def startup():
-    global chat_session
+    global chat_session, embeddings, vector_store
     model = genai.GenerativeModel("gemini-3.1-flash-lite")
     chat_session = model.start_chat(history=[])
+    
+    # Initialize embeddings
+    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+    
+    # Initialize Chroma vector store
+    vector_store = Chroma(
+        collection_name="documents",
+        embedding_function=embeddings,
+        persist_directory="./chroma_db"
+    )
+
+def get_relevant_context(query: str, k: int = 3) -> str:
+    """Get relevant context from vector store"""
+    global vector_store
+    if not vector_store:
+        return ""
+    
+    try:
+        results = vector_store.similarity_search(query, k=k)
+        context = "\n\n".join([doc.page_content for doc in results])
+        return context
+    except:
+        return ""
 
 @app.post("/api/chat/stream")
 async def chat_stream(request: MessageRequest):
-    """Streaming API для чату"""
+    """Streaming API for chat with RAG"""
     global chat_session
     
     if not request.message or not request.message.strip():
-        raise HTTPException(status_code=400, detail="Повідомлення не може бути пустим")
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+    
+    # Get relevant context
+    context = get_relevant_context(request.message)
+    
+    # Create prompt with context
+    if context:
+        enhanced_message = f"""Based on the following context, answer the question:
+
+Context:
+{context}
+
+Question: {request.message}"""
+    else:
+        enhanced_message = request.message
     
     async def generate():
         try:
-            response = chat_session.send_message(request.message, stream=True)
+            response = chat_session.send_message(enhanced_message, stream=True)
             for chunk in response:
                 if chunk.text:
                     yield chunk.text.encode('utf-8')
                     await asyncio.sleep(0)
         except Exception as e:
-            yield f"Помилка: {str(e)}".encode('utf-8')
+            yield f"Error: {str(e)}".encode('utf-8')
     
     return StreamingResponse(generate(), media_type="text/plain; charset=utf-8")
 
 @app.post("/api/chat")
 async def chat(request: MessageRequest):
-    """API для чату (звичайна відповідь без потокової передачі)"""
+    """API for chat (normal response without streaming) with RAG"""
     global chat_session
     
     if not request.message or not request.message.strip():
-        raise HTTPException(status_code=400, detail="Повідомлення не може бути пустим")
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
     
     try:
-        response = chat_session.send_message(request.message)
+        # Get relevant context
+        context = get_relevant_context(request.message)
+        
+        # Create prompt with context
+        if context:
+            enhanced_message = f"""Based on the following context, answer the question:
+
+Context:
+{context}
+
+Question: {request.message}"""
+        else:
+            enhanced_message = request.message
+        
+        response = chat_session.send_message(enhanced_message)
         return {
             "message": request.message,
             "response": response.text,
             "status": "success"
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Помилка AI: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"AI Error: {str(e)}")
+
+@app.post("/api/documents/upload-pdf")
+async def upload_pdf(file: UploadFile = File(...)):
+    """Upload PDF file"""
+    global vector_store
+    
+    if not file.filename.endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+    
+    try:
+        # Save file
+        file_path = os.path.join(UPLOAD_FOLDER, file.filename)
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        # Load PDF
+        loader = PyPDFLoader(file_path)
+        documents = loader.load()
+        
+        # Split text
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=200,
+        )
+        docs = text_splitter.split_documents(documents)
+        
+        # Add to vector store
+        vector_store.add_documents(docs)
+        vector_store.persist()
+        
+        return {
+            "status": "success",
+            "filename": file.filename,
+            "documents_added": len(docs)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error uploading file: {str(e)}")
+
+@app.post("/api/documents/upload-url")
+async def upload_url(request: URLRequest):
+    """Upload content from URL"""
+    global vector_store
+    
+    try:
+        # Load content from URL
+        loader = WebBaseLoader(request.url)
+        documents = loader.load()
+        
+        # Split text
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=200,
+        )
+        docs = text_splitter.split_documents(documents)
+        
+        # Add to vector store
+        vector_store.add_documents(docs)
+        vector_store.persist()
+        
+        return {
+            "status": "success",
+            "url": request.url,
+            "documents_added": len(docs)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error loading URL: {str(e)}")
+
+@app.get("/api/documents/count")
+async def get_documents_count():
+    """Get document count in database"""
+    global vector_store
+    try:
+        count = vector_store._collection.count()
+        return {"documents_count": count}
+    except:
+        return {"documents_count": 0}
 
 @app.get("/health")
 async def health_check():
-    """Health check для Render"""
+    """Health check for Render"""
     return {"status": "ok"}
 
 if __name__ == "__main__":
