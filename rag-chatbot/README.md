@@ -1,6 +1,14 @@
-# Study Program RAG Chatbot - LLM + RAG System
+# Study Program RAG Chatbot - API-Based LLM + RAG System
 
-Система на базі локальних моделей з Hugging Face (Llama 2) для відповідей на запитання про програми навчання з використанням RAG (Retrieval Augmented Generation).
+Система на базі **зовнішніх LLM API** (OpenAI, Anthropic, Cohere) з **локальною RAG системою** для відповідей на запитання про програми навчання.
+
+## 🎯 Що нове?
+
+- ✅ **Не потрібно завантажувати локальні моделі** (економія 5GB+ диску)
+- ✅ **Використання найновіших моделей** (GPT-4, Claude, тощо)
+- ✅ **Краща якість відповідей**
+- ✅ **Вибір провайдера** (OpenAI, Anthropic, Cohere)
+- ✅ **Система RAG залишилась локальною** (приватні embeddings)
 
 ## Архітектура
 
@@ -11,23 +19,23 @@
 └──────────────────────┬──────────────────────────────┘
                        │
 ┌──────────────────────▼──────────────────────────────┐
-│          FastAPI Backend (Render Server)            │
+│          FastAPI Backend (Your Server)              │
 ├──────────────────────────────────────────────────────┤
 │                   RAG Service                       │
 │  ┌────────────────────────────────────────────────┐ │
-│  │  LLM Service (Llama 2)                         │ │
-│  │  • Генерація відповідей                        │ │
-│  │  • Обробка контексту                           │ │
+│  │  LLM Service (OpenAI/Anthropic/Cohere API) ☁️  │ │
+│  │  • Генерація відповідей через API             │ │
+│  │  • Обробка контексту                          │ │
 │  └────────────────────────────────────────────────┘ │
 │  ┌────────────────────────────────────────────────┐ │
-│  │  Embedding Service (DistilBERT)                │ │
-│  │  • Векторизація документів                     │ │
-│  │  • Векторизація запитів                        │ │
+│  │  Embedding Service (DistilBERT) 💻             │ │
+│  │  • Локальна векторизація документів            │ │
+│  │  • Локальна векторизація запитів              │ │
 │  └────────────────────────────────────────────────┘ │
 │  ┌────────────────────────────────────────────────┐ │
-│  │  Vector Store (Chroma)                         │ │
-│  │  • Зберігання векторів                         │ │
-│  │  • Семантичний пошук                           │ │
+│  │  Vector Store (Chroma) 📊                      │ │
+│  │  • Зберігання векторів локально                │ │
+│  │  • Семантичний пошук                          │ │
 │  └────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────┘
                        │
@@ -42,61 +50,15 @@
 ## Вимоги
 
 - Python 3.10+
-- PyTorch (з GPU підтримкою опціонально)
-- 8GB RAM мінімум (16GB рекомендується для Llama 2)
-- GPU опціонально (рекомендується для швидшої роботи)
+- API ключ від (OpenAI / Anthropic / Cohere)
+- 2GB RAM мінімум (для embeddings)
+- Інтернет з'єднання
 
-## Встановлення
+## ⚡ Швидкий старт
 
-### 1. Клонування та підготовка
+**Рекомендуємо прочитати [QUICKSTART_API.md](QUICKSTART_API.md) для швидкого налаштування!**
 
-```bash
-cd rag-chatbot
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# або
-venv\Scripts\activate  # Windows
-```
-
-### 2. Встановлення залежностей
-
-```bash
-pip install -r requirements.txt
-```
-
-**Примітка**: Перша інсталяція PyTorch може зайняти час та завантажити великий обсяг даних.
-
-### 3. Налаштування конфігурації
-
-Скопіюйте `.env.example` до `.env` та налаштуйте:
-
-```bash
-cp .env.example .env
-```
-
-Редагуйте `.env`:
-
-```env
-# Модель
-LLM_MODEL_NAME=meta-llama/Llama-2-7b-hf
-EMBEDDING_MODEL_NAME=sentence-transformers/distilbert-base-uncased
-
-# Пристрій (cpu або cuda)
-DEVICE=cpu  # Змініть на cuda, якщо є GPU
-
-# Інші налаштування
-VECTOR_DB_TYPE=chroma
-CHROMA_PATH=./vector_store
-MODELS_CACHE_DIR=./models_cache
-```
-
-## Використання
-
-### Запуск сервера
-
-```bash
-python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
+### 1. Встановлення
 
 Сервер запуститься на `http://localhost:8000`
 
@@ -283,38 +245,45 @@ rag-chatbot/
 │   ├── models/
 │   │   └── __init__.py        # Pydantic моделі
 │   ├── services/
-│   │   ├── llm_service.py     # Llama 2 сервіс
+│   │   ├── llm_service.py     # LLM API сервіс
 │   │   ├── rag_service.py     # RAG оркестрація
 │   │   └── vector_store.py    # Chroma сховище
 │   ├── routers/
 │   │   └── rag_router.py      # API маршрути
 │   └── utils/
 │       ├── pdf_processor.py   # Обробка документів
-│       ├── dataset_manager.py # Управління датасетами
-│       └── fine_tuner.py      # Fine-tuning утиліти
+│       └── dataset_manager.py # Управління датасетами
 ├── uploads/                    # Завантажені файли
 ├── vector_store/               # Chroma база даних
-├── models_cache/               # Кеш завантажених моделей
 ├── requirements.txt
 ├── .env.example
 └── README.md
 ```
 
-## Performance Оптимізація
+## API Провайдери
 
-### Для CPU
+### OpenAI (Рекомендується)
 
 ```env
-DEVICE=cpu
-MAX_NEW_TOKENS=256
-EMBEDDING_MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2
+LLM_PROVIDER=openai
+LLM_API_KEY=sk-proj-your-api-key
+LLM_MODEL_NAME=gpt-3.5-turbo
 ```
 
-### Для GPU (CUDA)
+### Anthropic (Claude)
 
 ```env
-DEVICE=cuda
-MAX_NEW_TOKENS=512
+LLM_PROVIDER=anthropic
+LLM_API_KEY=sk-ant-your-api-key
+LLM_MODEL_NAME=claude-3-sonnet-20240229
+```
+
+### Cohere
+
+```env
+LLM_PROVIDER=cohere
+LLM_API_KEY=your-cohere-key
+LLM_MODEL_NAME=command
 ```
 
 ## Development на локальній машині
@@ -340,44 +309,26 @@ print(response.json())
 
 ## Deployment на Render
 
-### 1. Підготовка
+Детальна інструкція в [DEPLOY_RENDER.md](DEPLOY_RENDER.md)
 
-- Створіть репозиторій на GitHub
-- Добавте файли проекту
-
-### 2. Конфігурація Render
-
-Створіть `render.yaml`:
-
-```yaml
-services:
-  - type: web
-    name: rag-chatbot
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.10.0
-      - key: DEVICE
-        value: cpu
-```
-
-### 3. Деплой
-
+Швидко:
 1. Коннектіть GitHub репозиторій до Render
-2. Render автоматично деплойятиме на кожен push
+2. Встановіть environment змінні (особливо `LLM_API_KEY` як secret)
+3. Render автоматично деплойятиме на кожен push
 
 ## Troubleshooting
 
-### Проблема: "Model not found"
-**Рішення**: Переконайтеся, що ім'я моделі правильне. Llama 2 потребує доступ до Hugging Face.
+### Проблема: "No API key provided"
+**Рішення**: Переконайтеся, що `LLM_API_KEY` встановлено в `.env` файлі
 
-### Проблема: "Out of memory"
-**Рішення**: Зменшіть `max_new_tokens` або `chunk_size` в `.env`
+### Проблема: "401 Unauthorized"
+**Рішення**: API ключ неправильний або закінчився кредит на провайдері
 
-### Проблема: Повільна генерація
-**Рішення**: Спробуйте меншу модель або GPU
+### Проблема: "Rate limit exceeded"
+**Рішення**: Чекайте кілька секунд перед наступним запитом
+
+### Проблема: "openai package not installed"
+**Рішення**: Запустіть `pip install openai` або `pip install --upgrade -r requirements.txt`
 
 ## Дорожна карта
 

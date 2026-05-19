@@ -37,10 +37,11 @@ git push origin main
 
 **Environment Variables:**
 - `PYTHON_VERSION`: `3.10.0`
-- `DEVICE`: `cpu`
-- `LLM_MODEL_NAME`: `meta-llama/Llama-2-7b-hf`
+- `LLM_PROVIDER`: `openai` (або `anthropic`, `cohere`)
+- `LLM_API_KEY`: `sk-proj-your-api-key` (отримайте з провайдера)
+- `LLM_MODEL_NAME`: `gpt-3.5-turbo` (або `gpt-4`, `claude-3-sonnet`)
 - `EMBEDDING_MODEL_NAME`: `sentence-transformers/distilbert-base-uncased`
-- `VECTOR_DB_TYPE`: `chroma`
+- `DEVICE`: `cpu`
 - `PYTHONUNBUFFERED`: `1`
 
 ### Через render.yaml
@@ -53,27 +54,22 @@ git push origin main
 
 ## Оптимізація для Render
 
-### 1. Memory Issues
+### 1. API Key Security
 
-Якщо отримаєте memory errors:
+Переконайтеся, що API ключ встановлено як secret variable на Render:
 
 ```env
-# Зменшіть розмір моделі
-LLM_MODEL_NAME=meta-llama/Llama-2-7b-chat-hf
-# або
-LLM_MODEL_NAME=microsoft/phi-2
-
-# Зменшіть параметри генерування
-MAX_NEW_TOKENS=256
-CHUNK_SIZE=512
+LLM_API_KEY=sk-proj-your-actual-key
 ```
+
+⚠️ **НЕ** додавайте ключ до `.env` файлу в гіті!
 
 ### 2. Startup Time
 
-Перша загрузка моделей буде тривалою (5-10 хвилин):
+Запуск буде миттєвим (30 сек - 1 хвилина):
 
-- Моделі кешуються після першого завантаження
-- Наступна перезагрузка буде швидшою
+- Немає завантаження моделей
+- API клієнт ініціалізується швидко
 - Слідкуйте за логами в Render dashboard
 
 ### 3. Персистентне сховище

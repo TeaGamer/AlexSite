@@ -6,20 +6,23 @@ from typing import Optional
 class Settings(BaseSettings):
     """Application settings"""
 
-    # Local LLM Model
-    llm_model_name: str = "meta-llama/Llama-2-7b-hf"  # From Hugging Face
+    # LLM Configuration (Using API)
+    llm_provider: str = "openai"  # openai, anthropic, or cohere
+    llm_api_key: str = ""  # Set via environment variable
+    llm_model_name: str = "gpt-3.5-turbo"  # OpenAI model
+    
+    # Embedding Model (Local)
     embedding_model_name: str = "sentence-transformers/distilbert-base-uncased"
     
     # Model Parameters
-    device: str = "cpu"  # or "cuda" if GPU available
-    max_new_tokens: int = 512
+    device: str = "cpu"  # for embeddings
+    max_tokens: int = 512
     temperature: float = 0.7
     top_p: float = 0.9
 
     # Vector Database
     vector_db_type: str = "chroma"
     chroma_path: str = "./vector_store"
-    models_cache_dir: str = "./models_cache"
 
     # FastAPI
     debug: bool = False

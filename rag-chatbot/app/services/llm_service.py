@@ -1,70 +1,76 @@
-"""Local LLM service using Hugging Face Transformers"""
+"""LLM service using external API (OpenAI, Anthropic, Cohere, etc.)"""
 from typing import List, Optional
-import torch
-from transformers import (
-    AutoTokenizer, 
-    AutoModelForCausalLM,
-    pipeline
-)
-from app.config import settings
 import os
+from app.config import settings
 
 
 class LLMService:
-    """Service for local LLM interactions using Hugging Face models"""
+    """Service for LLM interactions using external API"""
     
     def __init__(
         self, 
+        provider: str = None,
         model_name: str = None,
-        device: str = None,
-        cache_dir: str = None
+        api_key: str = None
     ):
-        """Initialize local LLM"""
+        """Initialize LLM API client"""
+        self.provider = provider or settings.llm_provider
         self.model_name = model_name or settings.llm_model_name
-        self.device = device or settings.device
-        self.cache_dir = cache_dir or settings.models_cache_dir
+        self.api_key = api_key or settings.llm_api_key
         
-        # Create cache directory if it doesn't exist
-        os.makedirs(self.cache_dir, exist_ok=True)
+        if not self.api_key:
+            raise ValueError(f"No API key provided for {self.provider}. Set LLM_API_KEY environment variable.")
         
-        print(f"Loading model: {self.model_name}...")
-        print(f"Using device: {self.device}")
+        print(f"Initializing {self.provider.upper()} LLM service...")
+        print(f"Using model: {self.model_name}")
         
+        if self.provider.lower() == "openai":
+            self._init_openai()
+        elif self.provider.lower() == "anthropic":
+            self._init_anthropic()
+        elif self.provider.lower() == "cohere":
+            self._init_cohere()
+        else:
+            raise ValueError(f"Unsupported provider: {self.provider}")
+    
+    def _init_openai(self):
+        """Initialize OpenAI client"""
         try:
-            # Load tokenizer
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                self.model_name,
-                cache_dir=self.cache_dir,
-                trust_remote_code=True
-            )
-            
-            # If tokenizer doesn't have pad token, set it
-            if self.tokenizer.pad_token is None:
-                self.tokenizer.pad_token = self.tokenizer.eos_token
-            
-            # Load model
-            self.model = AutoModelForCausalLM.from_pretrained(
-                self.model_name,
-                cache_dir=self.cache_dir,
-                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
-                device_map="auto" if self.device == "cuda" else None,
-                trust_remote_code=True,
-                low_cpu_mem_usage=True
-            )
-            
-            if self.device != "cuda":
-                self.model.to(self.device)
-            
-            self.model.eval()
-            print("Model loaded successfully!")
-            
+            import openai
+            openai.api_key = self.api_key
+            self.client = openai
+            print("OpenAI client initialized successfully!")
+        except ImportError:
+            raise ImportError("openai package not installed. Install with: pip install openai")
         except Exception as e:
-            raise Exception(f"Error loading model: {str(e)}")
+            raise Exception(f"Error initializing OpenAI: {str(e)}")
+    
+    def _init_anthropic(self):
+        """Initialize Anthropic (Claude) client"""
+        try:
+            import anthropic
+            self.client = anthropic.Anthropic(api_key=self.api_key)
+            print("Anthropic client initialized successfully!")
+        except ImportError:
+            raise ImportError("anthropic package not installed. Install with: pip install anthropic")
+        except Exception as e:
+            raise Exception(f"Error initializing Anthropic: {str(e)}")
+    
+    def _init_cohere(self):
+        """Initialize Cohere client"""
+        try:
+            import cohere
+            self.client = cohere.Client(api_key=self.api_key)
+            print("Cohere client initialized successfully!")
+        except ImportError:
+            raise ImportError("cohere package not installed. Install with: pip install cohere")
+        except Exception as e:
+            raise Exception(f"Error initializing Cohere: {str(e)}")
     
     def generate_text(
         self, 
         prompt: str,
-        max_new_tokens: int = None,
+        max_tokens: int = None,
         temperature: float = None,
         top_p: float = None
     ) -> str:
@@ -73,49 +79,61 @@ class LLMService:
         
         Args:
             prompt: Input prompt
-            max_new_tokens: Maximum new tokens to generate
+            max_tokens: Maximum tokens to generate
             temperature: Sampling temperature
             top_p: Nucleus sampling parameter
         
         Returns:
             Generated text
         """
-        if max_new_tokens is None:
-            max_new_tokens = settings.max_new_tokens
+        if max_tokens is None:
+            max_tokens = settings.max_tokens
         if temperature is None:
             temperature = settings.temperature
         if top_p is None:
             top_p = settings.top_p
         
         try:
-            inputs = self.tokenizer(
-                prompt,
-                return_tensors="pt",
-                truncation=True,
-                max_length=2048
-            ).to(self.device)
-            
-            with torch.no_grad():
-                outputs = self.model.generate(
-                    **inputs,
-                    max_new_tokens=max_new_tokens,
-                    temperature=temperature,
-                    top_p=top_p,
-                    do_sample=True,
-                    pad_token_id=self.tokenizer.pad_token_id,
-                    eos_token_id=self.tokenizer.eos_token_id,
-                )
-            
-            generated_text = self.tokenizer.decode(
-                outputs[0],
-                skip_special_tokens=True
-            )
-            
-            # Remove the prompt from the output
-            return generated_text[len(prompt):].strip()
-        
+            if self.provider.lower() == "openai":
+                return self._generate_openai(prompt, max_tokens, temperature, top_p)
+            elif self.provider.lower() == "anthropic":
+                return self._generate_anthropic(prompt, max_tokens, temperature, top_p)
+            elif self.provider.lower() == "cohere":
+                return self._generate_cohere(prompt, max_tokens, temperature, top_p)
         except Exception as e:
             raise Exception(f"Error generating text: {str(e)}")
+    
+    def _generate_openai(self, prompt: str, max_tokens: int, temperature: float, top_p: float) -> str:
+        """Generate text using OpenAI API"""
+        response = self.client.ChatCompletion.create(
+            model=self.model_name,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=max_tokens,
+            temperature=temperature,
+            top_p=top_p
+        )
+        return response.choices[0].message.content.strip()
+    
+    def _generate_anthropic(self, prompt: str, max_tokens: int, temperature: float, top_p: float) -> str:
+        """Generate text using Anthropic API"""
+        response = self.client.messages.create(
+            model=self.model_name,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response.content[0].text.strip()
+    
+    def _generate_cohere(self, prompt: str, max_tokens: int, temperature: float, top_p: float) -> str:
+        """Generate text using Cohere API"""
+        response = self.client.generate(
+            model=self.model_name,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            p=top_p
+        )
+        return response.generations[0].text.strip()
     
     def generate_response(
         self,
@@ -159,7 +177,7 @@ Answer:"""
         system_prompt: str = None
     ) -> str:
         """
-        Generate response with conversation history
+        Generate response with conversation history (for OpenAI/Anthropic)
         
         Args:
             messages: List of message dicts with 'role' and 'content'
@@ -171,21 +189,46 @@ Answer:"""
         if system_prompt is None:
             system_prompt = self._get_default_system_prompt()
         
-        # Build conversation prompt
-        conversation = f"{system_prompt}\n\n"
-        
-        for msg in messages:
-            role = msg.get("role", "user").upper()
-            content = msg.get("content", "")
-            conversation += f"{role}: {content}\n"
-        
-        conversation += "ASSISTANT:"
-        
         try:
-            response = self.generate_text(conversation)
-            return response.strip()
+            if self.provider.lower() == "openai":
+                return self._generate_with_history_openai(messages, system_prompt)
+            elif self.provider.lower() == "anthropic":
+                return self._generate_with_history_anthropic(messages, system_prompt)
+            else:
+                # Fallback for Cohere
+                conversation = f"{system_prompt}\n\n"
+                for msg in messages:
+                    role = msg.get("role", "user").upper()
+                    content = msg.get("content", "")
+                    conversation += f"{role}: {content}\n"
+                return self.generate_text(conversation)
         except Exception as e:
             raise Exception(f"Error generating response with history: {str(e)}")
+    
+    def _generate_with_history_openai(self, messages: List[dict], system_prompt: str) -> str:
+        """Generate with history using OpenAI API"""
+        formatted_messages = [{"role": "system", "content": system_prompt}]
+        formatted_messages.extend(messages)
+        
+        response = self.client.ChatCompletion.create(
+            model=self.model_name,
+            messages=formatted_messages,
+            max_tokens=settings.max_tokens,
+            temperature=settings.temperature,
+            top_p=settings.top_p
+        )
+        return response.choices[0].message.content.strip()
+    
+    def _generate_with_history_anthropic(self, messages: List[dict], system_prompt: str) -> str:
+        """Generate with history using Anthropic API"""
+        response = self.client.messages.create(
+            model=self.model_name,
+            max_tokens=settings.max_tokens,
+            temperature=settings.temperature,
+            system=system_prompt,
+            messages=messages
+        )
+        return response.content[0].text.strip()
     
     @staticmethod
     def _get_default_system_prompt() -> str:
