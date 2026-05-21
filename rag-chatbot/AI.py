@@ -235,7 +235,44 @@ async def health_check():
     """Health check for Render"""
     return {"status": "ok"}
 
+def console_chat():
+    """Simple console chat for testing"""
+    print("Initializing model...")
+    model = genai.GenerativeModel("gemini-3.1-flash-lite")
+    session = model.start_chat(history=[])
+    emb = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+    vs = Chroma(
+        collection_name="documents",
+        embedding_function=emb,
+        persist_directory="./chroma_db"
+    )
+    print("Console chat ready. Type 'exit' to quit.\n")
+    while True:
+        user_input = input("You: ").strip()
+        if user_input.lower() in ("exit", "quit"):
+            break
+        if not user_input:
+            continue
+        try:
+            results = vs.similarity_search(user_input, k=3)
+            context = "\n\n".join([doc.page_content for doc in results])
+        except Exception:
+            context = ""
+        if context:
+            prompt = f"Based on the following context, answer the question:\n\nContext:\n{context}\n\nQuestion: {user_input}"
+        else:
+            prompt = user_input
+        try:
+            response = session.send_message(prompt)
+            print(f"Bot: {response.text}\n")
+        except Exception as e:
+            print(f"Error: {e}\n")
+
 if __name__ == "__main__":
-    import uvicorn
-    port = int(os.getenv("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    import sys
+    if "--console" in sys.argv:
+        console_chat()
+    else:
+        import uvicorn
+        port = int(os.getenv("PORT", 8000))
+        uvicorn.run(app, host="0.0.0.0", port=port)
