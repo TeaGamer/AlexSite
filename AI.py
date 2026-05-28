@@ -62,7 +62,7 @@ Path(UPLOAD_FOLDER).mkdir(exist_ok=True)
 @app.on_event("startup")
 async def startup():
     global chat_session, embeddings, vector_store
-    model_name = os.getenv("LLM_MODEL_NAME", "gemini-2.0-flash")
+    model_name = os.getenv("LLM_MODEL_NAME", "gemini-3.1-flash-lite")
     chat_session = client.chats.create(model=model_name)
     
     # Initialize embeddings
@@ -163,8 +163,9 @@ async def upload_pdf(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
     
     try:
-        # Save file
-        file_path = os.path.join(UPLOAD_FOLDER, file.filename)
+        # Save file (use basename to prevent path traversal)
+        safe_filename = Path(file.filename).name
+        file_path = os.path.join(UPLOAD_FOLDER, safe_filename)
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         
@@ -181,7 +182,6 @@ async def upload_pdf(file: UploadFile = File(...)):
         
         # Add to vector store
         vector_store.add_documents(docs)
-        vector_store.persist()
         
         return {
             "status": "success",
@@ -210,7 +210,6 @@ async def upload_url(request: URLRequest):
         
         # Add to vector store
         vector_store.add_documents(docs)
-        vector_store.persist()
         
         return {
             "status": "success",
@@ -238,7 +237,7 @@ async def health_check():
 def console_chat():
     """Simple console chat for testing"""
     print("Initializing model...")
-    model_name = os.getenv("LLM_MODEL_NAME", "gemini-2.0-flash")
+    model_name = os.getenv("LLM_MODEL_NAME", "gemini-3.1-flash-lite")
     session = client.chats.create(model=model_name)
     emb = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     vs = Chroma(
