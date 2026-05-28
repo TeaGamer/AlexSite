@@ -62,7 +62,7 @@ Path(UPLOAD_FOLDER).mkdir(exist_ok=True)
 @app.on_event("startup")
 async def startup():
     global chat_session, embeddings, vector_store
-    model = genai.GenerativeModel("gemini-3.1-flash-lite")
+    model = genai.GenerativeModel("gemini-3.1-flash-lite") 
     chat_session = model.start_chat(history=[])
     
     # Initialize embeddings
