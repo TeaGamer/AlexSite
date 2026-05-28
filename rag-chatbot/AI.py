@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
 from dotenv import load_dotenv
-import google.generativeai as genai
+from google import genai
 import asyncio
 import shutil
 from pathlib import Path
@@ -13,7 +13,7 @@ from pathlib import Path
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import WebBaseLoader
 
 # Load environment variables
@@ -26,7 +26,7 @@ if not api_key:
     raise ValueError("GOOGLE_API_KEY not found in environment")
 
 # Configure Google API
-genai.configure(api_key=api_key)
+client = genai.Client(api_key=api_key)
 
 # Create FastAPI app
 app = FastAPI(title="Gemini ChatBot API with RAG")
@@ -62,8 +62,8 @@ Path(UPLOAD_FOLDER).mkdir(exist_ok=True)
 @app.on_event("startup")
 async def startup():
     global chat_session, embeddings, vector_store
-    model = genai.GenerativeModel("gemini-3.1-flash-lite") 
-    chat_session = model.start_chat(history=[])
+    model_name = os.getenv("LLM_MODEL_NAME", "gemini-2.0-flash")
+    chat_session = client.chats.create(model=model_name)
     
     # Initialize embeddings
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
@@ -112,7 +112,7 @@ Question: {request.message}"""
     
     async def generate():
         try:
-            response = chat_session.send_message(enhanced_message, stream=True)
+            response = chat_session.send_message_stream(enhanced_message)
             for chunk in response:
                 if chunk.text:
                     yield chunk.text.encode('utf-8')
@@ -238,8 +238,8 @@ async def health_check():
 def console_chat():
     """Simple console chat for testing"""
     print("Initializing model...")
-    model = genai.GenerativeModel("gemini-3.1-flash-lite")
-    session = model.start_chat(history=[])
+    model_name = os.getenv("LLM_MODEL_NAME", "gemini-2.0-flash")
+    session = client.chats.create(model=model_name)
     emb = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     vs = Chroma(
         collection_name="documents",
