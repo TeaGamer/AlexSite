@@ -86,10 +86,10 @@ async def startup():
         model=model_name,
         config={"system_instruction": SYSTEM_PROMPT}
     )
-    
+
     # Initialize embeddings
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-    
+
     # Initialize Chroma vector store
     vector_store = Chroma(
         collection_name="documents",
@@ -102,36 +102,41 @@ def get_relevant_context(query: str, k: int = 5) -> str:
     global vector_store
     if not vector_store:
         return ""
-    
+
     try:
         results = vector_store.similarity_search(query, k=k)
+        if not results:
+            return ""
         context = "\n\n".join([doc.page_content for doc in results])
         return context
     except:
         return ""
 
+def build_prompt(user_message: str, context: str) -> str:
+    """Build final prompt with or without RAG context"""
+    if context:
+        return f"""Use the following university knowledge base to answer the question.
+Answer in the same language as the question (Ukrainian, Polish, or English).
+
+--- KNOWLEDGE BASE ---
+{context}
+--- END OF KNOWLEDGE BASE ---
+
+Question: {user_message}"""
+    else:
+        return user_message
+
 @app.post("/api/chat/stream")
 async def chat_stream(request: MessageRequest):
     """Streaming API for chat with RAG"""
     global chat_session
-    
+
     if not request.message or not request.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
-    
-    # Get relevant context
+
     context = get_relevant_context(request.message)
-    
-    # Create prompt with context
-    if context:
-        enhanced_message = f"""Based on the following context, answer the question:
+    enhanced_message = build_prompt(request.message, context)
 
-Context:
-{context}
-
-Question: {request.message}"""
-    else:
-        enhanced_message = request.message
-    
     async def generate():
         try:
             response = chat_session.send_message_stream(enhanced_message)
@@ -141,32 +146,21 @@ Question: {request.message}"""
                     await asyncio.sleep(0)
         except Exception as e:
             yield f"Error: {str(e)}".encode('utf-8')
-    
+
     return StreamingResponse(generate(), media_type="text/plain; charset=utf-8")
 
 @app.post("/api/chat")
 async def chat(request: MessageRequest):
     """API for chat (normal response without streaming) with RAG"""
     global chat_session
-    
+
     if not request.message or not request.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
-    
+
     try:
-        # Get relevant context
         context = get_relevant_context(request.message)
-        
-        # Create prompt with context
-        if context:
-            enhanced_message = f"""Based on the following context, answer the question:
+        enhanced_message = build_prompt(request.message, context)
 
-Context:
-{context}
-
-Question: {request.message}"""
-        else:
-            enhanced_message = request.message
-        
         response = chat_session.send_message(enhanced_message)
         return {
             "message": request.message,
@@ -178,61 +172,111 @@ Question: {request.message}"""
 
 @app.post("/api/documents/upload-pdf")
 async def upload_pdf(file: UploadFile = File(...)):
-    """Upload PDF file"""
+    """Upload PDF file and add to knowledge base"""
     global vector_store
-    
+
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
-    
+
     try:
-        # Save file (use basename to prevent path traversal)
         safe_filename = Path(file.filename).name
         file_path = os.path.join(UPLOAD_FOLDER, safe_filename)
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-        
-        # Load PDF
+
         loader = PyPDFLoader(file_path)
         documents = loader.load()
-        
-        # Split text
+
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=200,
         )
         docs = text_splitter.split_documents(documents)
-        
-        # Add to vector store
+
         vector_store.add_documents(docs)
-        
+
         return {
             "status": "success",
             "filename": file.filename,
             "documents_added": len(docs)
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error uploading file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error uploading PDF: {str(e)}")
+
+@app.post("/api/documents/upload-csv")
+async def upload_csv(file: UploadFile = File(...)):
+    """Upload CSV file and add to knowledge base.
+
+    Each row is converted to a readable text chunk so the AI can answer
+    questions about courses, lecturers, schedules, etc.
+
+    Expected CSV columns (flexible — any columns are accepted):
+      e.g. subject, lecturer, semester, field, description, consultations, exam_date ...
+    """
+    global vector_store
+
+    if not file.filename.endswith('.csv'):
+        raise HTTPException(status_code=400, detail="Only CSV files are allowed")
+
+    try:
+        content = await file.read()
+        decoded = content.decode('utf-8-sig')  # handle BOM from Excel
+        reader = csv.DictReader(io.StringIO(decoded))
+
+        docs = []
+        for i, row in enumerate(reader):
+            # Build human-readable text from all columns
+            row_text = "\n".join(
+                f"{key.strip()}: {value.strip()}"
+                for key, value in row.items()
+                if value and value.strip()
+            )
+            if row_text:
+                docs.append(Document(
+                    page_content=row_text,
+                    metadata={"source": file.filename, "row": i + 1}
+                ))
+
+        if not docs:
+            raise HTTPException(status_code=400, detail="CSV file is empty or has no valid rows")
+
+        # Split long rows if needed
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=100,
+        )
+        split_docs = text_splitter.split_documents(docs)
+
+        vector_store.add_documents(split_docs)
+
+        return {
+            "status": "success",
+            "filename": file.filename,
+            "rows_processed": len(docs),
+            "documents_added": len(split_docs)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error uploading CSV: {str(e)}")
 
 @app.post("/api/documents/upload-url")
 async def upload_url(request: URLRequest):
-    """Upload content from URL"""
+    """Upload content from URL (HTML page) and add to knowledge base"""
     global vector_store
-    
+
     try:
-        # Load content from URL
         loader = WebBaseLoader(request.url)
         documents = loader.load()
-        
-        # Split text
+
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=200,
         )
         docs = text_splitter.split_documents(documents)
-        
-        # Add to vector store
+
         vector_store.add_documents(docs)
-        
+
         return {
             "status": "success",
             "url": request.url,
@@ -244,7 +288,7 @@ async def upload_url(request: URLRequest):
 
 @app.get("/api/documents/count")
 async def get_documents_count():
-    """Get document count in database"""
+    """Get document count in vector database"""
     global vector_store
     try:
         count = vector_store._collection.count()
@@ -254,14 +298,17 @@ async def get_documents_count():
 
 @app.get("/health")
 async def health_check():
-    """Health check for Render"""
+    """Health check"""
     return {"status": "ok"}
 
 def console_chat():
     """Simple console chat for testing"""
     print("Initializing model...")
-    model_name = os.getenv("LLM_MODEL_NAME", "gemini-3.1-flash-lite")
-    session = client.chats.create(model=model_name)
+    model_name = os.getenv("LLM_MODEL_NAME", "gemini-2.0-flash-lite")
+    session = client.chats.create(
+        model=model_name,
+        config={"system_instruction": SYSTEM_PROMPT}
+    )
     emb = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     vs = Chroma(
         collection_name="documents",
@@ -276,14 +323,11 @@ def console_chat():
         if not user_input:
             continue
         try:
-            results = vs.similarity_search(user_input, k=3)
+            results = vs.similarity_search(user_input, k=5)
             context = "\n\n".join([doc.page_content for doc in results])
         except Exception:
             context = ""
-        if context:
-            prompt = f"Based on the following context, answer the question:\n\nContext:\n{context}\n\nQuestion: {user_input}"
-        else:
-            prompt = user_input
+        prompt = build_prompt(user_input, context)
         try:
             response = session.send_message(prompt)
             print(f"Bot: {response.text}\n")
