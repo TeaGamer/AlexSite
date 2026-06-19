@@ -3,6 +3,8 @@ from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
+import csv
+import io
 from dotenv import load_dotenv
 from google import genai
 import asyncio
@@ -15,6 +17,7 @@ from langchain_community.vectorstores import Chroma
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import WebBaseLoader
+from langchain.schema import Document
 
 # Load environment variables
 load_dotenv()
@@ -43,6 +46,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# System prompt — university assistant
+SYSTEM_PROMPT = """You are a university assistant chatbot. Your role is to help students and staff with questions about:
+- Course listings by field of study and semester
+- Subject descriptions and syllabi (learning outcomes, topics covered)
+- Exam and credit dates / schedules
+- Lecturer information and consultation hours
+- Study rules, enrollment requirements, and academic regulations
+
+IMPORTANT RULES:
+1. Always respond in the same language the user writes in. Supported languages: Ukrainian (uk), Polish (pl), English (en).
+2. Base your answers strictly on the provided context from the university knowledge base.
+3. If the answer is not found in the context, say honestly that you don't have that information and suggest the user contact the dean's office.
+4. Do not invent or guess information about specific courses, lecturers, or dates.
+5. Be concise, friendly, and helpful.
+"""
+
 # Request models
 class MessageRequest(BaseModel):
     message: str
@@ -55,15 +74,18 @@ chat_session = None
 vector_store = None
 embeddings = None
 
-# Upload folder for PDF files
+# Upload folder for files
 UPLOAD_FOLDER = "uploads"
 Path(UPLOAD_FOLDER).mkdir(exist_ok=True)
 
 @app.on_event("startup")
 async def startup():
     global chat_session, embeddings, vector_store
-    model_name = os.getenv("LLM_MODEL_NAME", "gemini-3.1-flash-lite")
-    chat_session = client.chats.create(model=model_name)
+    model_name = os.getenv("LLM_MODEL_NAME", "gemini-2.0-flash-lite")
+    chat_session = client.chats.create(
+        model=model_name,
+        config={"system_instruction": SYSTEM_PROMPT}
+    )
     
     # Initialize embeddings
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
@@ -75,7 +97,7 @@ async def startup():
         persist_directory="./chroma_db"
     )
 
-def get_relevant_context(query: str, k: int = 3) -> str:
+def get_relevant_context(query: str, k: int = 5) -> str:
     """Get relevant context from vector store"""
     global vector_store
     if not vector_store:
@@ -216,6 +238,7 @@ async def upload_url(request: URLRequest):
             "url": request.url,
             "documents_added": len(docs)
         }
+        sasdw
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error loading URL: {str(e)}")
 
