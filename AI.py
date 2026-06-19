@@ -170,6 +170,29 @@ async def chat(request: MessageRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI Error: {str(e)}")
 
+@app.post("/api/chat/once")
+async def chat_once(request: MessageRequest):
+    """
+    Stateless AI call — does NOT use or modify the shared chat_session.
+    Use this for internal/system prompts (e.g. event parsing) so that
+    those prompts never pollute the user-facing conversation history.
+    """
+    if not request.message or not request.message.strip():
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    try:
+        model_name = os.getenv("LLM_MODEL_NAME", "gemini-2.0-flash-lite")
+        # Create a fresh, temporary session — discarded after this call
+        temp_session = client.chats.create(model=model_name)
+        response = temp_session.send_message(request.message)
+        return {
+            "message": request.message,
+            "response": response.text,
+            "status": "success"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI Error: {str(e)}")
+
 @app.post("/api/documents/upload-pdf")
 async def upload_pdf(file: UploadFile = File(...)):
     """Upload PDF file and add to knowledge base"""
@@ -282,7 +305,6 @@ async def upload_url(request: URLRequest):
             "url": request.url,
             "documents_added": len(docs)
         }
-        sasdw
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error loading URL: {str(e)}")
 
